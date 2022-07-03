@@ -2,6 +2,8 @@
 -- Tested on version 1.4, should also work for latest (1.5.2)
 -- Default BGB listener port is 8765
 -- Reference: https://bgb.bircd.org/bgblink.html
+-- CHANGELOG
+-- 20220703: Added support for multiple messages in one packet, cleanup some of the presentation pieces
 
 --- Bit Maps -------------------------------------------------------------------
 
@@ -39,7 +41,7 @@ bgblink.fields.command   = ProtoField.uint8("bgblink.command", "Command", base.S
 bgblink.fields.data1     = ProtoField.uint8("bgblink.d1", "Data 1", base.HEX)
 bgblink.fields.data2     = ProtoField.uint8("bgblink.d2", "Data 2", base.HEX)
 bgblink.fields.data3     = ProtoField.uint8("bgblink.d3", "Data 3", base.HEX)
-bgblink.fields.tstamp    = ProtoField.uint32("bgblink.timestamp", "Timestamp", base.DEC)
+bgblink.fields.tstamp    = ProtoField.uint32("bgblink.timestamp", "Timestamp", base.HEX)
 
 --- Command Specific Fields ----------------------------------------------------
 
@@ -65,64 +67,75 @@ bgblink.fields.status_b0 = ProtoField.uint8("bgblink.status_b0", "Running?", bas
 bgblink.fields.status_b1 = ProtoField.uint8("bgblink.status_b1", "Paused?", base.DEC, generic_bf, 0x2)
 bgblink.fields.status_b2 = ProtoField.uint8("bgblink.status_b1", "Extended Features", base.DEC, status_bf2, 0x4)
 
+function parseData(buffer,subtree,dOffs)
+        local cmd = buffer(dOffs, 1):uint() -- Command
+        local d1  = buffer(dOffs+1, 1) -- Data 1
+        local d2  = buffer(dOffs+2, 1) -- Data 2
+        local d3  = buffer(dOffs+3, 1) -- Data 3
+        local ts  = buffer(dOffs+4, 4):le_uint() -- Timestamp
+        local cmdData = subtree:add(bgblink, buffer(dOffs, 8), "Command")
+        if cmd == 0x01 then
+            cmdData:add(bgblink.fields.command, cmd, "Command: Version")
+            cmdData:add(bgblink.fields.version, d1:uint() .. "." .. d2:uint())
+            cmdData:add(bgblink.fields.data3, d3)
+        elseif cmd == 0x65 then
+            cmdData:add(bgblink.fields.command, cmd, "Command: Joypad")
+            cmdData:add(bgblink.fields.btnnum, d1:bitfield(5,3)) -- Indexed from MSB = 0
+            cmdData:add(bgblink.fields.btnpress, d1:bitfield(4,1))
+            cmdData:add(bgblink.fields.data2, d2)
+            cmdData:add(bgblink.fields.data3, d3)
+        elseif cmd == 0x68 then
+            cmdData:add(bgblink.fields.command, cmd, "Command: Sync1 - Byte from Peripheral")
+            cmdData:add(bgblink.fields.sync1_dv, d1)
+            cmdData:add(bgblink.fields.sync1_cv0, d2)
+            cmdData:add(bgblink.fields.sync1_cv1, d2)
+            cmdData:add(bgblink.fields.sync1_cv2, d2)
+            cmdData:add(bgblink.fields.data3, d3)
+        elseif cmd == 0x69 then
+            cmdData:add(bgblink.fields.command, cmd, "Command: Sync2 - Passive Transfer Response")
+            cmdData:add(bgblink.fields.sync2_dv, d1)
+            cmdData:add(bgblink.fields.sync2_cv, d2)
+            cmdData:add(bgblink.fields.data3, d3)
+        elseif cmd == 0x6A then
+            if d1:uint() == 1 then 
+                cmdData:add(bgblink.fields.command, cmd, "Command: Sync3 - Received Active Transfer")
+                cmdData:add(bgblink.fields.data1, d1)
+                cmdData:add(bgblink.fields.data2, d2)
+                cmdData:add(bgblink.fields.data3, d3)
+            else
+                cmdData:add(bgblink.fields.command, cmd, "Command: Sync3 - Updating Timestamp")
+                cmdData:add(bgblink.fields.data1, d1)
+                cmdData:add(bgblink.fields.data2, d2)
+                cmdData:add(bgblink.fields.data3, d3)
+            end
+        elseif cmd == 0x6C then
+            cmdData:add(bgblink.fields.command, cmd, "Command: Status")
+            cmdData:add(bgblink.fields.status_b0, d1)
+            cmdData:add(bgblink.fields.status_b1, d1)
+            cmdData:add(bgblink.fields.status_b2, d1)
+        elseif cmd == 0x6D then
+            cmdData:add(bgblink.fields.command, cmd, "Command: Want Disconnect (BGB 1.5.2)")
+        else
+            cmdData:add(bgblink.fields.command, cmd, "Command: UNKNOWN")
+            cmdData:add(bgblink.fields.data1, d1)
+            cmdData:add(bgblink.fields.data2, d2)
+            cmdData:add(bgblink.fields.data3, d3)
+        end
+        cmdData:add_le(bgblink.fields.tstamp, buffer(dOffs+4, 4), ts)
+end
+
 function bgblink.dissector(buffer, pinfo, tree)
     pinfo.cols.protocol = "BGB-LINK"
     local subtree = tree:add(bgblink, buffer(), "BGB Link Protocol")
     local buff_len = buffer:len()
-    if buff_len == 8 then
-        local cmd = buffer(0, 1):uint() -- Command
-        local d1  = buffer(1, 1) -- Data 1
-        local d2  = buffer(2, 1) -- Data 2
-        local d3  = buffer(3, 1) -- Data 3
-        local ts  = buffer(4, 4):le_uint() -- Timestamp
-        if cmd == 0x01 then
-            subtree:add(bgblink.fields.command, cmd, "Command: Version")
-            subtree:add(bgblink.fields.version, d1:uint() .. "." .. d2:uint())
-            subtree:add(bgblink.fields.data3, d3)
-        elseif cmd == 0x65 then
-            subtree:add(bgblink.fields.command, cmd, "Command: Joypad")
-            subtree:add(bgblink.fields.btnnum, d1:bitfield(5,3)) -- Indexed from MSB = 0
-            subtree:add(bgblink.fields.btnpress, d1:bitfield(4,1))
-            subtree:add(bgblink.fields.data2, d2)
-            subtree:add(bgblink.fields.data3, d3)
-        elseif cmd == 0x68 then
-            subtree:add(bgblink.fields.command, cmd, "Command: Sync1 - Byte from Peripheral")
-            subtree:add(bgblink.fields.sync1_dv, d1)
-            subtree:add(bgblink.fields.sync1_cv0, d2)
-            subtree:add(bgblink.fields.sync1_cv1, d2)
-            subtree:add(bgblink.fields.sync1_cv2, d2)
-            subtree:add(bgblink.fields.data3, d3)
-        elseif cmd == 0x69 then
-            subtree:add(bgblink.fields.command, cmd, "Command: Sync2 - Passive Transfer Response")
-            subtree:add(bgblink.fields.sync2_dv, d1)
-            subtree:add(bgblink.fields.sync2_cv, d2)
-            subtree:add(bgblink.fields.data3, d3)
-        elseif cmd == 0x6A then
-            if d1:uint() == 1 then 
-                subtree:add(bgblink.fields.command, cmd, "Command: Sync3 - Received Active Transfer")
-                subtree:add(bgblink.fields.data1, d1)
-                subtree:add(bgblink.fields.data2, d2)
-                subtree:add(bgblink.fields.data3, d3)
-            else
-                subtree:add(bgblink.fields.command, cmd, "Command: Sync3 - Updating Timestamp")
-                subtree:add(bgblink.fields.data1, d1)
-                subtree:add(bgblink.fields.data2, d2)
-                subtree:add(bgblink.fields.data3, d3)
-            end
-        elseif cmd == 0x6C then
-            subtree:add(bgblink.fields.command, cmd, "Command: Status")
-            subtree:add(bgblink.fields.status_b0, d1)
-            subtree:add(bgblink.fields.status_b1, d1)
-            subtree:add(bgblink.fields.status_b2, d1)
-        elseif cmd == 0x6D then
-            subtree:add(bgblink.fields.command, cmd, "Command: Want Disconnect (BGB 1.5.2)")
-        else
-            subtree:add(bgblink.fields.command, cmd, "Command: UNKNOWN")
-            subtree:add(bgblink.fields.data1, d1)
-            subtree:add(bgblink.fields.data2, d2)
-            subtree:add(bgblink.fields.data3, d3)
+    local rem_len = buff_len
+    local dOffs = 0 -- The data offset
+    while dOffs < buff_len do
+        if rem_len >= 8 then
+            parseData(buffer,subtree,dOffs)
         end
-        subtree:add(bgblink.fields.tstamp, ts)
+        dOffs = dOffs + 8
+        rem_len = rem_len - 8
     end
 end
 
