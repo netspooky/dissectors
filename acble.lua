@@ -171,12 +171,23 @@ end
 
 -- 0x07 Proximity Pairing --------------------------------------------------\\--
 local ProxPairDeviceModels = {
-    [0x2002] = "AirPods 1",
-    [0x2003] = "Powerbeats3",
+    [0x2002] = "AirPods",
+    [0x2003] = "Powerbeats 3",
     [0x2005] = "BeatsX",
     [0x2006] = "Beats Solo 3",
+    [0x2007] = "Beats Studio 3",
+    [0x2009] = "Beats Studio 3",
+    [0x200a] = "AirPods Max",
+    [0x200b] = "Powerbeats Pro",
+    [0x200c] = "Beats Solo Pro",
+    [0x200d] = "Powerbeats 4",
     [0x200e] = "AirPods Pro",
     [0x200f] = "AirPods 2",
+    [0x2010] = "Beats Flex",
+    [0x2011] = "Beats Studio Buds",
+    [0x2012] = "Beats Fit Pro",
+    [0x2013] = "AirPods 3",
+    [0x2014] = "AirPods Pro 2",
 }
 local ProxPairDeviceColors = {
     [0x00] = "White",
